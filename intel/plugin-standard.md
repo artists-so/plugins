@@ -1,0 +1,133 @@
+# The artists.so plugin standard
+
+The pattern every plugin in this repository follows.
+`packages/executor-plugin-scrivener` is the reference implementation; when this
+document and that package disagree, fix one of them in the same commit. The
+constraints marked `[exp]` are established empirically in `intel/executor.md`
+§4–§5 — re-verify them when the executor version moves.
+
+## Package shape
+
+```
+packages/executor-plugin-<name>/
+  package.json        MIT, type: module, files: [dist, server.js]
+  server.js           one-line shim re-exporting ./dist/server.js   [exp: required]
+  tsconfig.json       strict, declaration on, outDir dist
+  src/
+    server.ts         definePlugin + tool() declarations ONLY — no domain logic
+    <engine>.ts       the domain engine, importable without the SDK
+  test/
+    engine.test.ts    bun:test, runs against a COPY of real user data
+  dist/               built, never committed
+```
+
+Rules that make it a standard rather than a habit:
+
+1. **Engine and surface stay separate.** Everything that understands the
+   domain (file formats, APIs, invariants) lives in engine modules that import
+   nothing from `@executor-js/sdk`. `server.ts` only declares tools and
+   delegates. This is what lets the same engine back an MCP server, a CLI, or
+   the next runtime without a rewrite — the transport is the throwaway part.
+2. **Few, whole-job tools.** A tool per *intent* (read the world, declare the
+   desired state, read one thing, write one thing), not per API endpoint.
+   Scrivener ships exactly four. A declarative bulk tool (`*_sync` taking the
+   intended state, matching by identity, idempotent, with `dryRun`) replaces
+   dozens of imperative calls and removes the half-edited failure mode.
+   Second run of the same input must be a no-op — test it.
+3. **Destructive paths are opt-in.** Nothing deletes unless the argument says
+   so (`prune`), and `dryRun` is supported wherever state changes.
+4. **Tool descriptions are written for an agent**: what it does, when to use
+   the other tool instead, what to call first, what is rejected and why. The
+   description is the API's documentation surface — the agent will not read
+   the README.
+
+## package.json (canonical)
+
+```jsonc
+{
+  "name": "@artists-so/executor-plugin-<name>",
+  "license": "MIT",
+  "type": "module",
+  "files": ["dist", "server.js"],
+  "exports": {
+    "./server": { "types": "./dist/server.d.ts", "default": "./server.js" }
+  },
+  "scripts": {
+    "build": "bun build src/server.ts --outdir dist --target node --format esm --sourcemap=external && tsc --emitDeclarationOnly",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": { "@executor-js/sdk": "<pin to executor version>" },
+  "peerDependencies": { "effect": "<the SDK's pinned beta>" }
+}
+```
+
+- `server.js` shim at the root: the executor binary resolves
+  `<package>/server` without reading `exports`. `[exp]`
+- `bun build` (full bundle): bare imports in plugin code do not survive the
+  binary's jiti; only Node builtins may stay external. Do NOT copy upstream's
+  tsup-with-externals config — it works in their monorepo, not against the
+  compiled binary. `[exp]`
+- Pin `@executor-js/sdk` to the installed executor's version; `effect` to the
+  SDK's own beta pin.
+
+## server.ts (canonical skeleton)
+
+```ts
+import { definePlugin, Effect, tool } from '@executor-js/sdk/core'; // never from 'effect'
+import { z } from 'zod';
+
+const args = z.object({ path: z.string().describe('...') });
+
+export const plugin = definePlugin(() => ({
+  id: '<name>_native' as const, // must not collide with any integration slug — collision is silent
+  packageName: '@artists-so/executor-plugin-<name>',
+  storage: () => ({}),
+  staticIntegrations: () => [{
+    id: '<name>_native', kind: '<name>_native', name: '<Name> (native)',
+    canRemove: false, canRefresh: false, canEdit: false,
+    tools: [
+      tool({
+        name: 'thing_read',
+        description: 'Agent-facing: when, why, what to call first.',
+        inputSchema: args,                   // zod 4.4+ satisfies StaticToolSchema
+        annotations: { readOnlyHint: true }, // on every non-writing tool
+        execute: (raw: unknown) =>           // inference does not reach here — parse
+          Effect.gen(function* () {
+            const a = args.parse(raw);
+            // delegate to the engine; wrap promises in Effect.tryPromise
+          }),
+      }),
+    ],
+  }],
+}));
+
+export default plugin;
+```
+
+Long-lived state (parsed projects, connections) lives in a module-level cache
+keyed by identity, with an explicit `reload` argument on the read tool — the
+whole point of being in-process is that this survives between calls.
+
+## Verification bar (all of it, before a plugin is "done")
+
+1. `bun run typecheck` clean — no `any`, `exactOptionalPropertyTypes` on.
+2. `bun test` green, tests running against a **copy** of real data, asserting
+   on **files read back**, not on return values. Include: idempotency of sync,
+   dry-run writes nothing, unknown vocabulary rejected with the valid options
+   named, round-trip fidelity of any format conversion.
+3. Loaded end to end: `bun install --force` in the consuming scope (bun copies
+   `file:` deps — stale copies lie), `executor service restart`, error log
+   clean, then the read tool and the sync tool called for real:
+   CLI (`executor call <id> <tool> '<json>'`) and sandbox
+   (`tools.<id>.<tool>({...})`).
+4. Health check after restart: a plugin that throws on load takes the daemon
+   down and launchd loops it. `daemon.error.log` is the first stop, always.
+
+## Licensing
+
+MIT, clean-room. Facts about a file format or a wire protocol are not
+copyrightable; code is. Knowledge extracted from AGPL or proprietary
+implementations enters this repository as *documented facts in intel/*, never
+as ported code. (This is why `intel/scrivener-format.md` exists — the AGPL
+`scrivener-mcp` fork it replaced is retired and nothing of it is copied here.)

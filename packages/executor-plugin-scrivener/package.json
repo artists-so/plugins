@@ -1,0 +1,35 @@
+{
+  "name": "@artists-so/executor-plugin-scrivener",
+  "version": "0.1.0",
+  "description": "Scrivener projects as a native Executor integration: binder read and sync, document read and write.",
+  "license": "MIT",
+  "type": "module",
+  "files": [
+    "dist",
+    "server.js"
+  ],
+  "exports": {
+    "./server": {
+      "types": "./dist/server.d.ts",
+      "default": "./server.js"
+    }
+  },
+  "scripts": {
+    "build": "bun build src/server.ts --outdir dist --target node --format esm --sourcemap=external && tsc --emitDeclarationOnly",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@executor-js/sdk": "1.5.40",
+    "fast-xml-parser": "^5.10.1",
+    "zod": "^4.4.3"
+  },
+  "peerDependencies": {
+    "effect": "4.0.0-beta.59"
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.1",
+    "effect": "4.0.0-beta.59",
+    "typescript": "^5.7.0"
+  }
+}
