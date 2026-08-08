@@ -297,12 +297,25 @@ export class ScrivenerProject {
 		}
 
 		if (fields.keywords !== undefined) {
-			removeChild(metadata, 'Keywords');
-			if (fields.keywords.length > 0) {
-				const keywords = { Keywords: fields.keywords.map((word) => textElement('Keyword', word)) };
-				childrenOf(metadata).push(keywords);
+			const existing = findChild(metadata, 'Keywords');
+			const current =
+				existing === undefined
+					? []
+					: childrenOf(existing)
+							.filter((child) => tagOf(child) === 'Keyword')
+							.map((child) => textOf(child));
+			const wanted = fields.keywords;
+			const equal =
+				current.length === wanted.length && current.every((word, i) => word === wanted[i]);
+			if (!equal) {
+				removeChild(metadata, 'Keywords');
+				if (wanted.length > 0) {
+					childrenOf(metadata).push({
+						Keywords: wanted.map((word) => textElement('Keyword', word)),
+					});
+				}
+				changed.push('keywords');
 			}
-			changed.push('keywords');
 		}
 
 		if (changed.length > 0) {
@@ -414,6 +427,14 @@ export class ScrivenerProject {
 	async readSynopsis(id: string): Promise<string> {
 		try {
 			return await readFile(join(this.dataDir(id), 'synopsis.txt'), 'utf8');
+		} catch {
+			return '';
+		}
+	}
+
+	async readNotes(id: string): Promise<string> {
+		try {
+			return rtfToText(await readFile(join(this.dataDir(id), 'notes.rtf'), 'utf8'));
 		} catch {
 			return '';
 		}

@@ -136,3 +136,8 @@ it with its stale in-memory tree. Observed live: a 121-item sync applied at
   not reference** (121 orphaned folders from the reverted sync were gone
   after a quit) — but it does *not* prune the corresponding `docs.checksum`
   lines, so the ledger accumulates stale entries. Stale lines are harmless.
+- Scrivener's save **strips `<IncludeInCompile>No</IncludeInCompile>`**
+  elements (observed on research items: 44 written, none survived the next
+  save; `Yes` elements survive). Do not assert the flag outside the draft
+  folder — a declarative outline that pins it to `false` reports a diff on
+  every run.

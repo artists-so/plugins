@@ -151,11 +151,16 @@ test('sync creates, labels, and writes the files Scrivener reads', async () => {
 	expect(scrivx).toMatch(/<LabelID>\d+<\/LabelID>/);
 });
 
-test('the same outline run twice changes nothing', async () => {
+test('the same outline run twice changes nothing — not even field updates', async () => {
 	const project = await ScrivenerProject.open(projectPath);
 	const result = await reconcile(project, OUTLINE, { root: 'manuscript' });
 	expect(result.changes.filter((c) => c.action === 'created').length).toBe(0);
 	expect(result.changes.filter((c) => c.action === 'reordered').length).toBe(0);
+	// Synopsis, notes and content are compared against disk before staging, so
+	// an unchanged outline is a true no-op, not a full rewrite that happens to
+	// produce the same bytes.
+	expect(result.changes.filter((c) => c.action === 'updated')).toEqual([]);
+	expect(result.summary).toContain('0 updated');
 });
 
 test('a dry run writes nothing', async () => {
@@ -192,6 +197,11 @@ test('the checksum file records what was written', async () => {
 
 test('rtf survives a round trip, including the characters that break it', async () => {
 	const text = 'Braces {like this} and a backslash \\ and an em dash — plus 中文.\n\nSecond paragraph.';
+	expect(rtfToText(textToRtf(text))).toBe(text);
+});
+
+test('runs of blank lines survive a round trip — ASCII diagrams depend on them', async () => {
+	const text = 'THE LOGBOOK\n\n\n   MORNING     DAY\n\n\n\nafter the table.';
 	expect(rtfToText(textToRtf(text))).toBe(text);
 });
 

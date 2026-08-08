@@ -170,5 +170,8 @@ export function rtfToText(rtf: string): string {
 		index += 1;
 	}
 
-	return out.join('').replace(/\n{3,}/g, '\n\n').trim();
+	// Trailing whitespace only. Runs of blank lines are content — ASCII
+	// diagrams and deliberately spaced prose use them — and collapsing runs
+	// here once made every document containing one read as forever-changed.
+	return out.join('').replace(/\s+$/u, '');
 }

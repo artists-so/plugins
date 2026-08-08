@@ -44,6 +44,13 @@ export interface ReconcileResult {
 
 const normalise = (title: string): string => title.trim().toLowerCase();
 
+/**
+ * Field equality up to trailing whitespace — Scrivener restyles RTF and may
+ * add a trailing break when a document is edited, and that must not read as
+ * "the text changed" forever after.
+ */
+const sameText = (a: string, b: string): boolean => a.replace(/\s+$/u, '') === b.replace(/\s+$/u, '');
+
 export async function reconcile(
 	project: ScrivenerProject,
 	outline: OutlineNode[],
@@ -88,10 +95,22 @@ export async function reconcile(
 			const id = getAttr(item, 'UUID') ?? '';
 
 			const metadataFields = project.applyMetadata(item, node);
+
+			// Stage only file fields that actually differ from disk. Skipping
+			// matches is what makes the summary honest ("0 updated" after a clean
+			// apply) and it leaves Scrivener's own rich formatting alone when the
+			// text underneath it is already right.
 			const fileFields: DocumentFields = {
-				...(node.synopsis === undefined ? {} : { synopsis: node.synopsis }),
-				...(node.notes === undefined ? {} : { notes: node.notes }),
-				...(node.content === undefined ? {} : { content: node.content }),
+				...(node.synopsis !== undefined &&
+				!sameText(await project.readSynopsis(id), node.synopsis)
+					? { synopsis: node.synopsis }
+					: {}),
+				...(node.notes !== undefined && !sameText(await project.readNotes(id), node.notes)
+					? { notes: node.notes }
+					: {}),
+				...(node.content !== undefined && !sameText(await project.readText(id), node.content)
+					? { content: node.content }
+					: {}),
 			};
 			const fileFieldNames = Object.keys(fileFields);
 			if (fileFieldNames.length > 0) fileWrites.push({ id, fields: fileFields });
