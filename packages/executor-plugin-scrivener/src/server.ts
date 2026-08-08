@@ -21,13 +21,41 @@
  * survive to this package and the argument silently arrives as `any` instead —
  * which is worth refusing, since these tools write to a manuscript. Parsing here
  * restores real types and stops trusting that validation happened upstream.
+ *
+ * Tool bodies are plain async functions inside `answering`, which is where the
+ * failure policy lives: an expected refusal is returned as data so the caller
+ * can read the reason, and anything else fails and becomes a logged fault. See
+ * `refusal.ts` for why that distinction has to exist.
  */
 
 import { definePlugin, Effect, tool } from '@executor-js/sdk/core';
 import { z } from 'zod';
 import { writeHazard } from './guard.js';
 import { ScrivenerProject } from './project.js';
-import { outlineText, reconcile, type OutlineNode } from './reconcile.js';
+import { reconcile, type OutlineNode } from './reconcile.js';
+import { isRefusal, Refusal, refusalPayload, type RefusalPayload } from './refusal.js';
+
+import { binderReadResult } from './views.js';
+
+/**
+ * Run a tool body, delivering refusals as data and letting faults fail.
+ *
+ * Argument-shape errors are not handled here: the runtime validates
+ * `inputSchema` before the handler runs and returns the offending issues to the
+ * caller intact (verified 2026-08-09), so they are already legible.
+ */
+const answering = <A>(body: () => Promise<A>): Effect.Effect<A | RefusalPayload, Error> =>
+	Effect.tryPromise({
+		try: async () => {
+			try {
+				return await body();
+			} catch (error) {
+				if (isRefusal(error)) return refusalPayload(error);
+				throw error;
+			}
+		},
+		catch: (error) => (error instanceof Error ? error : new Error(String(error))),
+	});
 
 /**
  * One parsed project per path, for the life of the process.
@@ -41,52 +69,31 @@ import { outlineText, reconcile, type OutlineNode } from './reconcile.js';
  */
 const open = new Map<string, ScrivenerProject>();
 
-const load = (path: string, reload = false): Effect.Effect<ScrivenerProject, Error> =>
-	Effect.gen(function* () {
-		const cached = open.get(path);
-		if (cached !== undefined) {
-			const stale = yield* Effect.tryPromise({
-				try: () => cached.changedOnDisk(),
-				catch: (error) => new Error(`Could not stat ${path}: ${String(error)}`),
-			});
-			if (stale || reload) {
-				if (cached.isDirty() && !reload) {
-					return yield* Effect.fail(
-						new Error(
-							`${path} changed on disk while edits were staged in memory. Refusing to guess; re-run the operation (it will start from the current file).`
-						)
-					);
-				}
-				yield* Effect.tryPromise({
-					try: () => cached.reload(),
-					catch: (error) => new Error(`Could not reload ${path}: ${String(error)}`),
-				});
+async function load(path: string, reload = false): Promise<ScrivenerProject> {
+	const cached = open.get(path);
+	if (cached !== undefined) {
+		if ((await cached.changedOnDisk()) || reload) {
+			if (cached.isDirty() && !reload) {
+				throw new Refusal(
+					'changed-on-disk',
+					`${path} changed on disk while edits were staged in memory. Refusing to guess which should win; nothing was written. Re-run the operation — it will start from the current file.`
+				);
 			}
-			return cached;
+			await cached.reload();
 		}
-		const project = yield* Effect.tryPromise({
-			try: () => ScrivenerProject.open(path),
-			catch: (error) => new Error(`Could not open ${path}: ${String(error)}`),
-		});
-		open.set(path, project);
-		return project;
-	});
+		return cached;
+	}
+	const project = await ScrivenerProject.open(path);
+	open.set(path, project);
+	return project;
+}
 
 /** Refuse writes while Scrivener plausibly has the project open, unless forced. */
-const guardWrite = (path: string, force: boolean | undefined): Effect.Effect<void, Error> =>
-	Effect.gen(function* () {
-		if (force === true) return;
-		const hazard = yield* Effect.tryPromise({
-			try: () => writeHazard(path),
-			catch: (error) => new Error(`Could not check write safety: ${String(error)}`),
-		});
-		if (hazard !== undefined) {
-			return yield* Effect.fail(new Error(hazard));
-		}
-	});
-
-const asError = (error: unknown): Error =>
-	error instanceof Error ? error : new Error(String(error));
+async function guardWrite(path: string, force: boolean | undefined): Promise<void> {
+	if (force === true) return;
+	const hazard = await writeHazard(path);
+	if (hazard !== undefined) throw new Refusal('scrivener-open', hazard);
+}
 
 const projectPath = z.string().describe('Absolute path to the .scriv package');
 const rootArg = z
@@ -184,19 +191,10 @@ export const scrivenerPlugin = definePlugin(() => ({
 					inputSchema: binderReadArgs,
 					annotations: { readOnlyHint: true },
 					execute: (raw: unknown) =>
-						Effect.gen(function* () {
+						answering(async () => {
 							const args = binderReadArgs.parse(raw);
-							const project = yield* load(args.path, args.reload === true);
-							const from =
-								args.root === undefined ? undefined : project.resolveRoot(args.root);
-							const tree = project.read(from);
-							return {
-								labels: project.labels().map((entry) => entry.title),
-								statuses: project.statuses().map((entry) => entry.title),
-								...(args.as === 'text'
-									? { outline: outlineText(tree).join('\n') }
-									: { binder: tree }),
-							};
+							const project = await load(args.path, args.reload === true);
+							return binderReadResult(project, { root: args.root, as: args.as });
 						}),
 				}),
 
@@ -206,20 +204,14 @@ export const scrivenerPlugin = definePlugin(() => ({
 						'Make a project match a declared outline in one pass: creates missing items, retitles, reorders, and sets label, status, synopsis, notes and document text. Items are matched by title within their parent, so running the same outline twice changes nothing the second time, and an outline can be reordered freely without losing documents. Nothing is deleted unless prune is set. Run with dryRun first to see the plan.',
 					inputSchema: binderSyncArgs,
 					execute: (raw: unknown) =>
-						Effect.gen(function* () {
+						answering(async () => {
 							const args = binderSyncArgs.parse(raw);
-							if (args.dryRun !== true) {
-								yield* guardWrite(args.path, args.force);
-							}
-							const project = yield* load(args.path);
-							return yield* Effect.tryPromise({
-								try: () =>
-									reconcile(project, args.outline as OutlineNode[], {
-										...(args.root === undefined ? {} : { root: args.root }),
-										...(args.prune === undefined ? {} : { prune: args.prune }),
-										...(args.dryRun === undefined ? {} : { dryRun: args.dryRun }),
-									}),
-								catch: asError,
+							if (args.dryRun !== true) await guardWrite(args.path, args.force);
+							const project = await load(args.path);
+							return reconcile(project, args.outline as OutlineNode[], {
+								...(args.root === undefined ? {} : { root: args.root }),
+								...(args.prune === undefined ? {} : { prune: args.prune }),
+								...(args.dryRun === undefined ? {} : { dryRun: args.dryRun }),
 							});
 						}),
 				}),
@@ -231,14 +223,16 @@ export const scrivenerPlugin = definePlugin(() => ({
 					inputSchema: documentReadArgs,
 					annotations: { readOnlyHint: true },
 					execute: (raw: unknown) =>
-						Effect.gen(function* () {
+						answering(async () => {
 							const args = documentReadArgs.parse(raw);
-							const project = yield* load(args.path);
-							const [text, synopsis] = yield* Effect.tryPromise({
-								try: () =>
-									Promise.all([project.readText(args.id), project.readSynopsis(args.id)]),
-								catch: asError,
-							});
+							const project = await load(args.path);
+							// Resolving the id first turns "no such document" into a refusal
+							// rather than an empty-looking success.
+							project.resolveRoot(args.id);
+							const [text, synopsis] = await Promise.all([
+								project.readText(args.id),
+								project.readSynopsis(args.id),
+							]);
 							return {
 								id: args.id,
 								text,
@@ -254,23 +248,19 @@ export const scrivenerPlugin = definePlugin(() => ({
 						'Write one existing document in place: its text, synopsis, notes, label or status. For anything structural, or for more than a couple of documents, use binder_sync instead.',
 					inputSchema: documentWriteArgs,
 					execute: (raw: unknown) =>
-						Effect.gen(function* () {
+						answering(async () => {
 							const args = documentWriteArgs.parse(raw);
-							yield* guardWrite(args.path, args.force);
-							const project = yield* load(args.path);
+							await guardWrite(args.path, args.force);
+							const project = await load(args.path);
 							const { path: _path, id, force: _force, ...fields } = args;
-							return yield* Effect.tryPromise({
-								try: async () => {
-									const metadata =
-										fields.label === undefined && fields.status === undefined
-											? []
-											: project.applyMetadata(project.resolveRoot(id), fields);
-									const files = await project.writeFields(id, fields);
-									await project.save();
-									return { id, written: [...files, ...metadata] };
-								},
-								catch: asError,
-							});
+							const item = project.resolveRoot(id);
+							const metadata =
+								fields.label === undefined && fields.status === undefined
+									? []
+									: project.applyMetadata(item, fields);
+							const files = await project.writeFields(id, fields);
+							await project.save();
+							return { id, written: [...files, ...metadata] };
 						}),
 				}),
 			],

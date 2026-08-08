@@ -11,9 +11,11 @@ and a full project parse per tool call.
 
 The plugins here run *inside* the agent's runtime instead, as
 [Executor](https://github.com/UsefulSoftwareCo/executor) plugins: the file is
-parsed once and stays parsed. Measured on the same machine, same operation:
-spawned stdio MCP ~1.7 s per call; in-process plugin ~0.1 s for the full round
-trip.
+parsed once and stays parsed. Same machine, same question — the structure of a
+204-item novel — full round trip, medians: **spawned stdio MCP 660 ms per call;
+in-process plugin 15 ms** (110 ms for the first, which parses the project).
+Almost none of that gap is parsing, which takes 2.7 ms; it is the cost of
+spawning a process and initialising a server for every question.
 
 ## Catalog
 
@@ -53,7 +55,7 @@ bun add @artists-so/executor-plugin-scrivener
 **3. Run the daemon** as an OS-supervised service, pinned to this scope:
 
 ```bash
-EXECUTOR_DATA_DIR="$PWD/.executor" EXECUTOR_SCOPE_DIR="$PWD" executor install
+EXECUTOR_DATA_DIR="$PWD/.executor" EXECUTOR_SCOPE_DIR="$PWD" executor install --port 4790
 executor service status
 ```
 
@@ -66,9 +68,10 @@ executor tools integrations          # scrivener_native should be listed
 executor call scrivener_native binder_read '{"path":"/path/to/Novel.scriv","as":"text"}'
 ```
 
-Or point any MCP client at `http://127.0.0.1:4789/mcp` (bearer token in
-`.executor/server-control/auth.json`) and use the `execute` tool — sandboxed
-TypeScript with every integration under `tools.*`:
+Or point any MCP client at `http://127.0.0.1:4790/mcp` — the port you installed
+with, bearer token in `.executor/server-control/auth.json` — and use the
+`execute` tool, which runs sandboxed TypeScript with every integration under
+`tools.*`:
 
 ```ts
 const binder = await tools.scrivener_native.binder_read({
@@ -76,6 +79,12 @@ const binder = await tools.scrivener_native.binder_read({
   as: "text",
 });
 ```
+
+Each call comes back as `{ ok, data }`. Note that a tool can also answer with a
+refusal inside `data` — `{ refused, message }` in place of a result, for
+conditions with a remedy the caller should act on. See
+[the Scrivener plugin's sample output](packages/executor-plugin-scrivener/docs/tool-output.md)
+for what that looks like in practice.
 
 Each package's README covers its own tools. If the daemon won't start after
 adding a plugin, read `<data-dir>/logs/daemon.error.log` — a plugin that fails

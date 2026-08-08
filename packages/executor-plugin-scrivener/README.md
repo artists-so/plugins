@@ -2,9 +2,10 @@
 
 [Scrivener](https://www.literatureandlatte.com/scrivener) projects as a native
 [Executor](https://github.com/UsefulSoftwareCo/executor) integration. The
-`.scriv` package is parsed once and held in memory by the daemon, so working
-through a manuscript costs ~0.1 s per call instead of a process spawn and a
-full re-parse.
+`.scriv` package is parsed once and held in memory by the daemon, so a question
+about a manuscript costs ~15 ms instead of the ~660 ms a spawned MCP server
+pays to exist all over again. Reproduce it on your own project with
+`SCRIV_PROJECT=/path/to/Novel.scriv bun run bench` (read-only).
 
 Clean-room MIT implementation. The on-disk format facts it is built on are
 documented in [`intel/scrivener-format.md`](../../intel/scrivener-format.md).
@@ -65,16 +66,47 @@ await tools.scrivener_native.binder_sync({
 
 Or from the CLI: `executor call scrivener_native binder_read '{"path":"..."}'`.
 
+**[What each tool answers with](docs/tool-output.md)** — real responses,
+generated from the test fixture by `bun run samples`, refusals included.
+
+## Refusals
+
+Conditions with an obvious remedy are answered, not thrown:
+
+```json
+{
+  "refused": "scrivener-open",
+  "message": "Scrivener is running on this machine. If this project is open in it, writes made now will be silently overwritten by its next auto-save. Quit Scrivener and retry, or pass force: true if a different project is open."
+}
+```
+
+**Check for `refused` before reading a result.** It arrives in place of one,
+never beside one. The reason it is data rather than an exception: the runtime
+turns a failed tool into `Internal tool error [<correlation id>]` and keeps the
+message in the daemon log, where the agent that has to decide what to do next
+cannot see it. Codes: `scrivener-open`, `changed-on-disk`,
+`unknown-vocabulary`, `project-unreadable`, `item-missing`.
+
 ## Things worth knowing
 
+- **Never write while the project is open in Scrivener.** It holds the binder in
+  memory and rewrites the `.scrivx` from that memory when it auto-saves, so a
+  write made underneath it disappears minutes later with no error anywhere. The
+  mutating tools check for this and refuse; `force: true` overrides, and is only
+  safe when the project open in Scrivener is a *different* one.
+- Nothing else needs remembering about freshness. The project is re-read
+  automatically whenever the file on disk changes, and a save refuses if the
+  `.scrivx` moved after it was parsed — the engine will not replace bytes it has
+  not seen. (`reload: true` on `binder_read` remains as an explicit override.)
 - Labels and statuses must already be defined in the project; unknown names
-  are rejected with the valid ones listed. (Scrivener: Project ▸ Settings ▸
+  are refused with the valid ones listed. (Scrivener: Project ▸ Settings ▸
   Label List / Status List.)
 - Synopses and notes are written to the sidecar files Scrivener actually reads
   (`Files/Data/<UUID>/synopsis.txt`, `notes.rtf`), and `docs.checksum` is
   maintained — the corkboard and snapshot machinery see the changes.
-- Don't write while the project is open in Scrivener; last write wins per
-  file. After Scrivener edits, pass `reload: true` to `binder_read`.
+- Writes are compared against disk first, so `binder_sync` reports `0 updated`
+  when nothing differs and leaves Scrivener's own formatting alone when the text
+  underneath it already matches.
 - Content is written as minimal RTF; Scrivener restyles on open. Formatting in
   existing documents is preserved only as plain text when read.
 
@@ -82,8 +114,12 @@ Or from the CLI: `executor call scrivener_native binder_read '{"path":"..."}'`.
 
 ```bash
 bun install
-bun run typecheck && bun test && bun run build
+bun run typecheck && bun test && bun run samples:check && bun run build
 ```
+
+`bun run samples` regenerates [`docs/tool-output.md`](docs/tool-output.md) by
+calling the tools for real; CI fails if the committed document is not what a
+fresh render produces, so the documented responses cannot drift.
 
 Tests run against a synthetic fixture project shaped like real Scrivener
 output. To run them against a real project of your own (a temporary copy is

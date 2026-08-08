@@ -41,6 +41,7 @@ import {
 	textOf,
 	type XmlNode,
 } from './xml.js';
+import { Refusal } from './refusal.js';
 import { rtfToText, textToRtf } from './rtf.js';
 
 export interface TaxonomyEntry {
@@ -105,6 +106,13 @@ function search(nodes: XmlNode[], test: (node: XmlNode) => boolean): XmlNode | u
 
 const digestOf = (text: string): string => createHash('sha1').update(text).digest('hex');
 
+/**
+ * Text equality up to trailing whitespace. Scrivener adds a trailing break when
+ * a document is edited, and that must not read as "the text changed" forever.
+ */
+const sameText = (a: string, b: string): boolean =>
+	a.replace(/\s+$/u, '') === b.replace(/\s+$/u, '');
+
 export class ScrivenerProject {
 	private dirty = false;
 	private readonly checksums = new Map<string, string>();
@@ -123,16 +131,27 @@ export class ScrivenerProject {
 	) {}
 
 	static async open(path: string): Promise<ScrivenerProject> {
-		const entries = await readdir(path);
+		const entries = await readdir(path).catch(() => {
+			throw new Refusal(
+				'project-unreadable',
+				`Nothing readable at ${path}. Give the path of the .scriv package itself (the folder, not the .scrivx inside it).`
+			);
+		});
 		const scrivx = entries.find((entry) => entry.endsWith('.scrivx'));
 		if (scrivx === undefined) {
-			throw new Error(`Not a Scrivener project (no .scrivx inside): ${path}`);
+			throw new Refusal(
+				'project-unreadable',
+				`Not a Scrivener project: ${path} contains no .scrivx file.`
+			);
 		}
 		const scrivxPath = join(path, scrivx);
 		const raw = await readFile(scrivxPath, 'utf8');
 		const tree = stripLayoutWhitespace(parseXml(raw));
 		if (findDescendant(tree, 'Binder') === undefined) {
-			throw new Error(`No <Binder> in ${scrivx}; the project may be damaged.`);
+			throw new Refusal(
+				'project-unreadable',
+				`No <Binder> in ${scrivx}; the project may be damaged. Nothing was changed.`
+			);
 		}
 		const project = new ScrivenerProject(path, scrivxPath, tree);
 		project.parsedDigest = digestOf(raw);
@@ -192,8 +211,9 @@ export class ScrivenerProject {
 		const hit = table.find((candidate) => candidate.title.trim().toLowerCase() === wanted);
 		if (hit === undefined) {
 			const known = table.map((candidate) => candidate.title).join(', ');
-			throw new Error(
-				`Unknown ${kind} "${title}". Define it in the project first. Known: ${known}`
+			throw new Refusal(
+				'unknown-vocabulary',
+				`Unknown ${kind} "${title}". Define it in the project first (Project ▸ Settings). Known: ${known}`
 			);
 		}
 		return hit.id;
@@ -217,12 +237,18 @@ export class ScrivenerProject {
 				return title === 'manuscript' || title === 'draft';
 			});
 			if (byTitle) return byTitle;
-			throw new Error('No manuscript folder in this project.');
+			throw new Refusal(
+				'item-missing',
+				'No manuscript folder in this project (no DraftFolder, and nothing titled Manuscript or Draft).'
+			);
 		}
 
 		const byId = search(childrenOf(this.root()), (node) => getAttr(node, 'UUID') === which);
 		if (byId) return byId;
-		throw new Error(`No binder item with id ${which}`);
+		throw new Refusal(
+			'item-missing',
+			`No binder item with id ${which}. Call binder_read to see the ids this project has.`
+		);
 	}
 
 	titleOf(item: XmlNode): string {
@@ -399,18 +425,43 @@ export class ScrivenerProject {
 		);
 	}
 
+	/**
+	 * The subset of synopsis, notes and content that differs from what is on
+	 * disk.
+	 *
+	 * Reading before writing is what lets a declarative sync report "nothing
+	 * changed" honestly, and it is only affordable because the project is
+	 * already open in this process.
+	 */
+	async differingFields(id: string, fields: DocumentFields): Promise<DocumentFields> {
+		return {
+			...(fields.synopsis !== undefined &&
+			!sameText(await this.readSynopsis(id), fields.synopsis)
+				? { synopsis: fields.synopsis }
+				: {}),
+			...(fields.notes !== undefined && !sameText(await this.readNotes(id), fields.notes)
+				? { notes: fields.notes }
+				: {}),
+			...(fields.content !== undefined && !sameText(await this.readText(id), fields.content)
+				? { content: fields.content }
+				: {}),
+		};
+	}
+
+	/** Write the file-backed fields that differ, and report which those were. */
 	async writeFields(id: string, fields: DocumentFields): Promise<string[]> {
+		const differing = await this.differingFields(id, fields);
 		const written: string[] = [];
-		if (fields.synopsis !== undefined) {
-			await this.writeDocFile(id, 'synopsis.txt', fields.synopsis);
+		if (differing.synopsis !== undefined) {
+			await this.writeDocFile(id, 'synopsis.txt', differing.synopsis);
 			written.push('synopsis');
 		}
-		if (fields.notes !== undefined) {
-			await this.writeDocFile(id, 'notes.rtf', textToRtf(fields.notes));
+		if (differing.notes !== undefined) {
+			await this.writeDocFile(id, 'notes.rtf', textToRtf(differing.notes));
 			written.push('notes');
 		}
-		if (fields.content !== undefined) {
-			await this.writeDocFile(id, 'content.rtf', textToRtf(fields.content));
+		if (differing.content !== undefined) {
+			await this.writeDocFile(id, 'content.rtf', textToRtf(differing.content));
 			written.push('content');
 		}
 		return written;
@@ -447,7 +498,8 @@ export class ScrivenerProject {
 
 		if (this.dirty) {
 			if (await this.changedOnDisk()) {
-				throw new Error(
+				throw new Refusal(
+					'changed-on-disk',
 					`${this.scrivxPath} changed on disk after it was parsed — most likely Scrivener has the project open and auto-saved, or a sync client delivered a newer version. Writing now would destroy those changes. Nothing was written. Close Scrivener (or let the sync settle), then retry; the project will be re-read automatically.`
 				);
 			}

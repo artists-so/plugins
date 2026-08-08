@@ -139,7 +139,54 @@ tool + all four scrivener tools ran]`
   or `tools.search({ namespace, query: "" })`. `[exp] [cli]`
 - Destructive core tools pause for approval; resume with
   `executor resume --execution-id <id> --action accept --content '{}'`. `[cli]`
-- Round-trip cost for a native plugin tool via MCP `execute`: ~0.1 s. `[exp]`
+- A successful call answers `{ ok: true, data: <tool result> }` in the sandbox.
+  `[exp]`
+
+### 6.0 Measured cost, 2026-08-09 `[exp]`
+
+Same machine, same question (binder of a 204-item Scrivener project), medians.
+Superseded the earlier "~0.1 s round trip / ~1.7 s spawned" figures, both of
+which were wrong: the first was a cold call, the second an unoptimised server.
+
+| Path | Cost |
+| --- | --- |
+| Spawned stdio MCP server, per call (20 warm runs unavailable — 5 runs, 654–1497 ms) | 660 ms |
+| Native plugin, MCP round trip, warm (20 runs, 7–25 ms) | 14–16 ms |
+| Native plugin, in-sandbox call only | 5–7 ms |
+| Native plugin, first call after restart (parses the project) | ~110 ms |
+| Engine alone: parse the project from disk | 2.7 ms |
+| Engine alone: answer from the parsed project | 0.4 ms |
+
+The engine numbers matter for framing: **parsing is not the expense.** A spawned
+call spends its time on process start, module load, server init and protocol
+negotiation. Quote the round-trip numbers for user-facing claims and the engine
+numbers when explaining where the time goes.
+
+### 6.1 Tool failures are opaque to the caller — design around it
+
+Verified 2026-08-09, executor 1.5.40. `[exp]`
+
+- **Anything a tool fails with reaches the caller as `Internal tool error
+  [<8-hex correlation id>]`.** The message is dropped. This holds for
+  `Effect.fail(new Error(msg))`, for a throw inside `Effect.tryPromise`, and for
+  a throw inside the promise a tool awaits — three separate probes, all
+  identical to the caller.
+- The real message is written to the daemon log only:
+  `daemon.log` → `tool dispatch failed ToolInvocationError: <message>` with
+  `executor.correlation_id`, and a bare `Internal tool error [<id>]` in
+  `daemon.error.log`. Useful for a human debugging, useless to an agent.
+- **`inputSchema` violations are the exception**: the runtime validates before
+  the handler and returns the offending issues to the caller intact (path,
+  expected, message). No plugin-side handling needed.
+- Consequence for design: any condition the caller could act on — a lock, a
+  conflict, an unknown enum value, a missing id — must be **returned as data**,
+  not failed. The scrivener plugin's `refusal.ts` is the reference: expected
+  conditions become `{ refused: <code>, message }` in place of a result, and
+  only genuine faults are left to fail (where an opaque id plus a log line is
+  the right trade).
+- `handler` signature, for testing a tool the way the runtime calls it:
+  `handler({ args, ctx, elicit })` → `Effect`. Note `handler`, not `execute` —
+  `tool()` renames it. `[types: plugin.d.ts StaticToolHandlerInput]`
 
 ## 7. Scope-local traps
 
@@ -165,6 +212,7 @@ and what corrected it.
 | `exports` subpath failing was probably a packaging mistake on our side | the binary's resolver reads no `exports` at all — reproduced with both forms, fresh installs | controlled experiment |
 | Bundling was a workaround; externals are canonical | for this binary, full bundling is the only working form; externals fail on jiti fallback | controlled experiment |
 | Earlier resolution/loading test results | some were artifacts of **stale `file:` copies** in the scope | discovering bun copy behaviour |
+| A carefully worded error message is how a tool explains a refusal | the runtime replaces it with `Internal tool error [<id>]`; every guard message written for the agent was invisible to it | calling the tools through the daemon and reading what came back |
 
 The pattern behind most of these: acting on a plausible model instead of the
 five minutes it takes to read `--help`, the schema, or the loader source.

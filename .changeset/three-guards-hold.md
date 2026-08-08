@@ -11,6 +11,13 @@ content digest of the .scrivx it parsed and refuses to save over bytes it has
 not seen; and the project cache self-heals, re-reading transparently whenever
 the file changes on disk, making `reload` an override rather than a chore.
 
+Deliver refusals as data. Conditions with a remedy — Scrivener open, a write
+conflict, a label the project does not define, an unknown id, a path that is not
+a project — now answer `{ refused, message }` in place of a result. Previously
+they were thrown, and the runtime replaced every one of those messages with an
+opaque `Internal tool error [<id>]`, leaving the explanation in a log the caller
+never sees. Check for `refused` before reading a result.
+
 Make `binder_sync` honestly idempotent: synopsis, notes, content and keywords
 are now compared against what is on disk before being staged, so an unchanged
 outline reports `0 updated` instead of rewriting every sidecar — and

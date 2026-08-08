@@ -38,6 +38,9 @@
     "build": "bun build src/server.ts --outdir dist --target node --format esm --sourcemap=external && tsc --emitDeclarationOnly",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
+    "bench": "bun scripts/benchmark.ts",
+    "samples": "bun scripts/sample-output.ts",
+    "samples:check": "bun scripts/sample-output.ts && git diff --exit-code -- docs/tool-output.md",
     "prepublishOnly": "bun run build"
   },
   "dependencies": {

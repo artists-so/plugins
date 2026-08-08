@@ -28,7 +28,8 @@
     "typecheck": "bun run --filter '*' typecheck",
     "test": "bun run --filter '*' test",
     "build": "bun run --filter '*' build",
-    "ci": "bun run lint && bun run typecheck && bun run test && bun run build",
+    "docs:check": "bun run --filter '*' --if-present samples:check",
+    "ci": "bun run lint && bun run typecheck && bun run test && bun run docs:check && bun run build",
     "changeset": "changeset",
     "release": "bun run build && changeset publish"
   },

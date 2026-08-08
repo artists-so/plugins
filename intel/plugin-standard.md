@@ -136,14 +136,48 @@ The scrivener plugin's `guard.ts` + `project.ts` (`changedOnDisk`) are the
 reference implementation; `intel/scrivener-format.md` § Concurrent access has
 the observed failure this protects against.
 
+## Refusals are data, never failures
+
+A failed tool reaches the caller as `Internal tool error [<id>]` with the
+message kept in the daemon log (`intel/executor.md` § 6.1). So a plugin must
+split its unhappy paths in two:
+
+- **Refusals** — anything the caller could act on: a lock held elsewhere, a
+  write conflict, a name the host application does not define, an id that does
+  not exist. Return `{ refused: <code>, message }` *in place of* a result, never
+  beside one, so a caller reading fields cannot mistake it for success. Model
+  them as one `Refusal` error class thrown from deep code and converted to data
+  at the tool boundary — one wrapper, no per-tool handling.
+- **Faults** — bugs. Let them fail; an opaque id plus a log line is the right
+  trade for something no caller can fix.
+
+Do not hand-write validation of the input schema: the runtime validates
+`inputSchema` before the handler and returns the issues intact.
+
+Test refusals through `handler({ args, ctx, elicit })` rather than the internals,
+because delivery is the part that breaks.
+
+## Documented output is generated
+
+Sample responses in a README rot silently, and a plugin's response shape is the
+part users write code against. Render it: a `samples` script that calls the real
+handlers against the fixture and writes a committed document, plus a
+`samples:check` that fails when a fresh render differs (`bun run docs:check` at
+the root runs it for every package that has one). Elide uuids and temp paths so
+re-rendering is a clean diff.
+
 ## Verification bar (all of it, before a plugin is "done")
 
 1. `bun run typecheck` clean — no `any`, `exactOptionalPropertyTypes` on.
 2. `bun test` green, tests running against a **copy** of the synthetic fixture
    (and, locally, of real data via the env-var mode), asserting on **files
-   read back**, not on return values. Include: idempotency of sync, dry-run
-   writes nothing, unknown vocabulary rejected with the valid options named,
-   round-trip fidelity of any format conversion.
+   read back**, not on return values. Include: idempotency of sync (a second
+   identical run reports *zero* field updates, not just zero creations),
+   dry-run writes nothing, unknown vocabulary refused with the valid options
+   named, round-trip fidelity of any format conversion, and every refusal
+   asserted through `handler` to prove it is delivered as data.
+2b. `bun run samples:check` clean — the committed sample output is what a fresh
+   render produces.
 3. Loaded end to end: `bun install --force` in the consuming scope (bun copies
    `file:` deps — stale copies lie), `executor service restart`, error log
    clean, then the read tool and the sync tool called for real:
