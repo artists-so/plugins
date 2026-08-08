@@ -1,0 +1,40 @@
+{
+  "name": "artists-so-workspace",
+  "private": true,
+  "description": "Integrations for the tools artists actually work in, built as native Executor plugins.",
+  "keywords": [
+    "executor",
+    "executor-plugin",
+    "mcp",
+    "ai-agent",
+    "creative-tools",
+    "scrivener"
+  ],
+  "homepage": "https://artists.so",
+  "bugs": {
+    "url": "https://github.com/artists-so/plugins/issues"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/artists-so/plugins.git"
+  },
+  "workspaces": [
+    "packages/*"
+  ],
+  "type": "module",
+  "scripts": {
+    "lint": "oxlint packages --deny-warnings",
+    "typecheck": "bun run --filter '*' typecheck",
+    "test": "bun run --filter '*' test",
+    "build": "bun run --filter '*' build",
+    "ci": "bun run lint && bun run typecheck && bun run test && bun run build",
+    "changeset": "changeset",
+    "release": "bun run build && changeset publish"
+  },
+  "devDependencies": {
+    "@changesets/changelog-github": "^0.5.1",
+    "@changesets/cli": "^2.29.8",
+    "oxlint": "^1.42.0"
+  }
+}

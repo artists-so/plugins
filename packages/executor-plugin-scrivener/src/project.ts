@@ -75,9 +75,10 @@ export interface BinderView {
 	readonly children?: BinderView[];
 }
 
+const pad = (value: number): string => String(value).padStart(2, '0');
+
 /** Scrivener's timestamp form: `2026-08-08 21:07:32 +0700`. */
 function stamp(date = new Date()): string {
-	const pad = (value: number): string => String(value).padStart(2, '0');
 	const offset = -date.getTimezoneOffset();
 	const sign = offset >= 0 ? '+' : '-';
 	const absolute = Math.abs(offset);
@@ -90,6 +91,16 @@ function stamp(date = new Date()): string {
 
 function newUuid(): string {
 	return crypto.randomUUID().toUpperCase();
+}
+
+/** Depth-first search for a BinderItem matching the test. */
+function search(nodes: XmlNode[], test: (node: XmlNode) => boolean): XmlNode | undefined {
+	for (const node of nodes) {
+		if (tagOf(node) === 'BinderItem' && test(node)) return node;
+		const found = search(childrenOf(node), test);
+		if (found) return found;
+	}
+	return undefined;
 }
 
 export class ScrivenerProject {
@@ -173,15 +184,6 @@ export class ScrivenerProject {
 	 */
 	resolveRoot(which: 'manuscript' | 'binder' | string): XmlNode {
 		if (which === 'binder') return this.root();
-
-		const search = (nodes: XmlNode[], test: (node: XmlNode) => boolean): XmlNode | undefined => {
-			for (const node of nodes) {
-				if (tagOf(node) === 'BinderItem' && test(node)) return node;
-				const found = search(childrenOf(node), test);
-				if (found) return found;
-			}
-			return undefined;
-		};
 
 		if (which === 'manuscript') {
 			const byType = search(childrenOf(this.root()), (node) => getAttr(node, 'Type') === 'DraftFolder');
@@ -407,7 +409,7 @@ export class ScrivenerProject {
 
 		if (this.checksumsLoaded && this.checksums.size > 0) {
 			const lines = [...this.checksums.entries()]
-				.sort(([a], [b]) => a.localeCompare(b))
+				.toSorted(([a], [b]) => a.localeCompare(b))
 				.map(([key, digest]) => `${key}=${digest}`);
 			await writeFile(
 				join(this.path, 'Files', 'Data', 'docs.checksum'),

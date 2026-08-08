@@ -2,6 +2,23 @@
   "name": "@artists-so/executor-plugin-scrivener",
   "version": "0.1.0",
   "description": "Scrivener projects as a native Executor integration: binder read and sync, document read and write.",
+  "keywords": [
+    "scrivener",
+    "executor",
+    "executor-plugin",
+    "writing",
+    "manuscript",
+    "ai-agent"
+  ],
+  "homepage": "https://artists.so",
+  "bugs": {
+    "url": "https://github.com/artists-so/plugins/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/artists-so/plugins.git",
+    "directory": "packages/executor-plugin-scrivener"
+  },
   "license": "MIT",
   "type": "module",
   "files": [
@@ -14,10 +31,14 @@
       "default": "./server.js"
     }
   },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "bun build src/server.ts --outdir dist --target node --format esm --sourcemap=external && tsc --emitDeclarationOnly",
     "typecheck": "tsc --noEmit",
-    "test": "bun test"
+    "test": "bun test",
+    "prepublishOnly": "bun run build"
   },
   "dependencies": {
     "@executor-js/sdk": "1.5.40",

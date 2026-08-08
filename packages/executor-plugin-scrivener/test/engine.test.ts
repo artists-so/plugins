@@ -1,30 +1,40 @@
 /**
- * Engine tests against a real Scrivener project.
+ * Engine tests against a Scrivener project on disk.
+ *
+ * By default the project is a synthetic fixture (test/fixture.ts) shaped like
+ * real Scrivener 3.5.2 output, so the suite runs anywhere, including CI. Set
+ * SCRIV_TEST_PROJECT to a .scriv path to run the same suite against a real
+ * project instead — only a temporary copy is ever touched.
  *
  * The project is copied per run, because the failures worth catching here are
  * corruption failures: a write that succeeds, leaves valid XML, and quietly
  * destroys the label definitions or moves a synopsis somewhere Scrivener does
  * not look. Those cannot be seen by inspecting the return value of the call that
- * caused them, so each test reads the files back instead.
+ * caused them, so each test reads the files back instead. A real project used
+ * this way must define DAWN and DAY labels and PLANNED and DRAFTED statuses.
  */
 
 import { afterAll, beforeAll, expect, test } from 'bun:test';
-import { cp, mkdtemp, readFile, rm } from 'fs/promises';
+import { cp, mkdtemp, readdir, readFile, rm } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { ScrivenerProject } from '../src/project.js';
 import { reconcile, type OutlineNode } from '../src/reconcile.js';
 import { rtfToText, textToRtf } from '../src/rtf.js';
-
-const SOURCE = '/Users/flo/personal/writing/Life of a Private Thought.scriv';
+import { createFixtureProject } from './fixture.js';
 
 let workspace: string;
 let projectPath: string;
 
 beforeAll(async () => {
 	workspace = await mkdtemp(join(tmpdir(), 'scriv-test-'));
-	projectPath = join(workspace, 'test.scriv');
-	await cp(SOURCE, projectPath, { recursive: true });
+	const source = process.env['SCRIV_TEST_PROJECT'];
+	if (source === undefined) {
+		projectPath = await createFixtureProject(workspace);
+	} else {
+		projectPath = join(workspace, 'test.scriv');
+		await cp(source, projectPath, { recursive: true });
+	}
 });
 
 afterAll(async () => {
@@ -32,9 +42,10 @@ afterAll(async () => {
 });
 
 const scrivxOf = async (): Promise<string> => {
-	const project = await ScrivenerProject.open(projectPath);
-	void project;
-	return readFile(join(projectPath, 'Life of a Private Thought.scrivx'), 'utf8');
+	const entries = await readdir(projectPath);
+	const scrivx = entries.find((entry) => entry.endsWith('.scrivx'));
+	if (scrivx === undefined) throw new Error('No .scrivx in the test project');
+	return readFile(join(projectPath, scrivx), 'utf8');
 };
 
 test('reads the label and status vocabularies', async () => {
@@ -57,6 +68,8 @@ test('reads the manuscript tree', async () => {
 	expect(acts.length).toBeGreaterThan(0);
 });
 
+const countOf = (text: string, pattern: RegExp): number => text.match(pattern)?.length ?? 0;
+
 test('a save with no edits preserves attributes and definitions', async () => {
 	const before = await scrivxOf();
 	const project = await ScrivenerProject.open(projectPath);
@@ -66,7 +79,6 @@ test('a save with no edits preserves attributes and definitions', async () => {
 
 	// The exact serialisation may differ; what must not change is the load-bearing
 	// content. This is the shape of the bug that corrupted the real project.
-	const countOf = (text: string, pattern: RegExp): number => text.match(pattern)?.length ?? 0;
 	expect(countOf(after, /<BinderItem UUID="/g)).toBe(countOf(before, /<BinderItem UUID="/g));
 	expect(countOf(after, /<Label ID="/g)).toBe(countOf(before, /<Label ID="/g));
 	expect(countOf(after, /<Status ID="/g)).toBe(countOf(before, /<Status ID="/g));

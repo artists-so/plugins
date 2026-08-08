@@ -1,0 +1,30 @@
+name: Bug report
+description: A plugin misbehaved — corrupted a file, refused a valid call, crashed the daemon.
+labels: [bug]
+body:
+  - type: input
+    id: plugin
+    attributes:
+      label: Plugin and version
+      placeholder: "@artists-so/executor-plugin-scrivener 0.1.0"
+    validations:
+      required: true
+  - type: input
+    id: executor
+    attributes:
+      label: Executor version and OS
+      placeholder: "executor 1.5.40, macOS 15"
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: The tool call you made, what you expected, what you got. Include daemon.error.log lines if the daemon went down.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction
+      description: Smallest input that shows it. For file-corruption bugs, describe the project state before and after — never upload a manuscript you don't want public.

@@ -1,0 +1,52 @@
+name: Release
+
+# Changesets flow: PRs carry a changeset file describing the version bump;
+# merging to main lets the action open (or update) a "Version Packages" PR;
+# merging that PR publishes to npm. Requires the NPM_TOKEN repository secret
+# (an npm automation token with publish rights on the @artists-so scope).
+
+on:
+  push:
+    branches:
+      - main
+
+concurrency: release-${{ github.ref }}
+
+permissions:
+  contents: write
+  pull-requests: write
+  id-token: write
+
+jobs:
+  release:
+    name: Version or publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      # npm is used for the actual publish; setup-node provides auth wiring.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      - name: Create version PR or publish
+        uses: changesets/action@v1
+        with:
+          publish: bun run release
+          title: "Version packages"
+          commit: "Version packages"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

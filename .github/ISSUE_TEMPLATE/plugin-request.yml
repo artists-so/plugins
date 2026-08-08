@@ -1,0 +1,25 @@
+name: Plugin request
+description: A tool artists work in that should be agent-native.
+labels: [plugin-request]
+body:
+  - type: input
+    id: tool
+    attributes:
+      label: The tool
+      placeholder: "DaVinci Resolve / Photopea / Ableton Live / ..."
+    validations:
+      required: true
+  - type: textarea
+    id: surface
+    attributes:
+      label: Where its data lives
+      description: Local files? A scripting API? A cloud API? Links to format documentation or API references make a plugin dramatically more likely to happen.
+    validations:
+      required: true
+  - type: textarea
+    id: jobs
+    attributes:
+      label: The jobs to be done
+      description: What should an agent be able to do, phrased as whole jobs ("reorganise the timeline", "batch-rename layers"), not API calls.
+    validations:
+      required: true

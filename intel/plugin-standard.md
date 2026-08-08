@@ -10,16 +10,26 @@ constraints marked `[exp]` are established empirically in `intel/executor.md`
 
 ```
 packages/executor-plugin-<name>/
-  package.json        MIT, type: module, files: [dist, server.js]
+  package.json        MIT, type: module, files: [dist, server.js],
+                      publishConfig.access public, repository.directory set
+  README.md           the package's public face: install, tools table, examples, caveats
+  LICENSE             copy of the root MIT text (npm packs per-package)
   server.js           one-line shim re-exporting ./dist/server.js   [exp: required]
   tsconfig.json       strict, declaration on, outDir dist
   src/
     server.ts         definePlugin + tool() declarations ONLY — no domain logic
     <engine>.ts       the domain engine, importable without the SDK
   test/
-    engine.test.ts    bun:test, runs against a COPY of real user data
+    fixture.ts        builds a synthetic project/document shaped like the real
+                      tool's output — CI must run with nothing installed
+    engine.test.ts    bun:test against a COPY of the fixture; an env var
+                      (e.g. SCRIV_TEST_PROJECT) swaps in real user data locally
   dist/               built, never committed
 ```
+
+The lockfile lives at the workspace root (bun workspaces), not in the package.
+Releases go through changesets (`bun run changeset`); CI is
+`bun run ci` = lint (oxlint, deny-warnings) + typecheck + test + build.
 
 Rules that make it a standard rather than a habit:
 
@@ -112,10 +122,11 @@ whole point of being in-process is that this survives between calls.
 ## Verification bar (all of it, before a plugin is "done")
 
 1. `bun run typecheck` clean — no `any`, `exactOptionalPropertyTypes` on.
-2. `bun test` green, tests running against a **copy** of real data, asserting
-   on **files read back**, not on return values. Include: idempotency of sync,
-   dry-run writes nothing, unknown vocabulary rejected with the valid options
-   named, round-trip fidelity of any format conversion.
+2. `bun test` green, tests running against a **copy** of the synthetic fixture
+   (and, locally, of real data via the env-var mode), asserting on **files
+   read back**, not on return values. Include: idempotency of sync, dry-run
+   writes nothing, unknown vocabulary rejected with the valid options named,
+   round-trip fidelity of any format conversion.
 3. Loaded end to end: `bun install --force` in the consuming scope (bun copies
    `file:` deps — stale copies lie), `executor service restart`, error log
    clean, then the read tool and the sync tool called for real:

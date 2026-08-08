@@ -14,7 +14,7 @@
  */
 
 import type { ScrivenerProject, DocumentFields } from './project.js';
-import { childrenOf, getAttr, setText, findChild, tagOf, type XmlNode } from './xml.js';
+import { getAttr, setText, findChild, tagOf, type XmlNode } from './xml.js';
 
 export interface OutlineNode extends DocumentFields {
 	readonly title: string;
