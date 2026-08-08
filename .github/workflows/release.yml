@@ -40,7 +40,19 @@ jobs:
       - name: Install
         run: bun install --frozen-lockfile
 
+      # The secrets context is not available in job-level `if`, so the gate
+      # lives in a step: without NPM_TOKEN the workflow explains and succeeds
+      # instead of failing red on every push.
+      - name: Detect npm token
+        id: npm
+        run: echo "present=${{ secrets.NPM_TOKEN != '' }}" >> "$GITHUB_OUTPUT"
+
+      - name: No npm token yet
+        if: steps.npm.outputs.present != 'true'
+        run: echo "::notice::NPM_TOKEN secret is not set — skipping version/publish. Add an npm automation token with publish rights on the @artists-so scope to enable releases."
+
       - name: Create version PR or publish
+        if: steps.npm.outputs.present == 'true'
         uses: changesets/action@v1
         with:
           publish: bun run release
