@@ -116,8 +116,25 @@ export default plugin;
 ```
 
 Long-lived state (parsed projects, connections) lives in a module-level cache
-keyed by identity, with an explicit `reload` argument on the read tool — the
-whole point of being in-process is that this survives between calls.
+keyed by identity — the whole point of being in-process is that this survives
+between calls. A cache over files someone else can edit must be
+**self-healing**, not flag-operated:
+
+1. At parse time, record a **content digest** of the source bytes (digest,
+   not mtime — sync clients preserve timestamps).
+2. On every load, compare digests and re-read transparently on drift. No one
+   remembers a `reload` flag; keep the flag only as an explicit override.
+3. Before every write, compare again and refuse on drift: *never replace
+   bytes you have not seen.* The error names the likely writer and the
+   remedy.
+4. Digests cannot see another app's **unsaved** in-memory state. If the
+   host application holds documents in memory (Scrivener does), add a
+   process-level hazard check (`pgrep`) on mutating tools, overridable with
+   an explicit `force` argument that documents the risk in its description.
+
+The scrivener plugin's `guard.ts` + `project.ts` (`changedOnDisk`) are the
+reference implementation; `intel/scrivener-format.md` § Concurrent access has
+the observed failure this protects against.
 
 ## Verification bar (all of it, before a plugin is "done")
 

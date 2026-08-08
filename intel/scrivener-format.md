@@ -103,6 +103,36 @@ Scrivener's external-change detection has a stale picture.
 - Scrivener (the app) rewrites the .scrivx on save and does not need any
   specific formatting — structural fidelity is what matters.
 - UUIDs: uppercase v4 (`crypto.randomUUID().toUpperCase()` matches observed).
-- If the project is open in Scrivener while a tool writes to it, last write
-  wins per file; coordinate by not doing that. (Engine keeps a parsed project
-  cached; `reload` picks up outside edits.)
+
+## Concurrent access (verified the hard way, 2026-08-08)
+
+An open Scrivener session holds the **binder in memory** and rewrites the
+whole `.scrivx` from that memory on every auto-save and on quit. A tool that
+writes the `.scrivx` while the project is open in Scrivener loses, silently,
+minutes later — the write succeeds, then Scrivener's next auto-save replaces
+it with its stale in-memory tree. Observed live: a 121-item sync applied at
+21:53 was reverted by Scrivener's 22:12 auto-save with no error anywhere.
+
+- **macOS Scrivener 3.5.2 writes no lock file.** Neither `user.lock` nor
+  `Files/user.lock` appears in the package while the project is open (both
+  were checked live). Lock files are a Windows/older-version signal only —
+  still worth checking, never sufficient.
+- Detection layers that do work, in order of strength:
+  1. `pgrep -x Scrivener` — the app is running; the project *may* be open in
+     it. Conservative (false-positives when a different project is open),
+     which is the right direction for manuscripts.
+  2. Content digest of the `.scrivx` at parse time, compared before every
+     write — "never replace bytes you have not seen". Digest, not mtime:
+     sync clients preserve timestamps. This catches the *saved* half of the
+     hazard with zero false positives.
+  3. Nothing catches Scrivener's **unsaved** in-memory state except knowing
+     the process runs — hence layer 1 stays even with layer 2 in place.
+- Quitting Scrivener via `osascript -e 'tell application "Scrivener" to
+  quit'` saves the session cleanly (no dialog for a saved project) and takes
+  ~1–3 s; poll `pgrep` until gone. Reopen with `open -a Scrivener
+  <project>`. This "bounce" is the sanctioned way to write to a project the
+  user has open.
+- On quit, Scrivener **garbage-collects `Files/Data/` folders its binder does
+  not reference** (121 orphaned folders from the reverted sync were gone
+  after a quit) — but it does *not* prune the corresponding `docs.checksum`
+  lines, so the ledger accumulates stale entries. Stale lines are harmless.

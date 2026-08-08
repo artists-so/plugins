@@ -25,15 +25,19 @@
 
 import { definePlugin, Effect, tool } from '@executor-js/sdk/core';
 import { z } from 'zod';
+import { writeHazard } from './guard.js';
 import { ScrivenerProject } from './project.js';
 import { outlineText, reconcile, type OutlineNode } from './reconcile.js';
 
 /**
  * One parsed project per path, for the life of the process.
  *
- * Every write goes through this instance and a dry run reloads itself, so the
- * cached tree is always the tree that was last written. Edits made in Scrivener
- * itself are picked up by passing `reload`.
+ * The cache is self-healing: every load compares the digest of the .scrivx on
+ * disk with the digest this instance parsed, and re-reads transparently when
+ * they differ — so edits made in Scrivener (or by a sync client) are picked up
+ * without anyone remembering a reload flag, while the unchanged case stays at
+ * in-process speed. The engine additionally refuses to save over bytes it has
+ * not seen, so even a mid-call external write cannot be destroyed.
  */
 const open = new Map<string, ScrivenerProject>();
 
@@ -41,7 +45,18 @@ const load = (path: string, reload = false): Effect.Effect<ScrivenerProject, Err
 	Effect.gen(function* () {
 		const cached = open.get(path);
 		if (cached !== undefined) {
-			if (reload) {
+			const stale = yield* Effect.tryPromise({
+				try: () => cached.changedOnDisk(),
+				catch: (error) => new Error(`Could not stat ${path}: ${String(error)}`),
+			});
+			if (stale || reload) {
+				if (cached.isDirty() && !reload) {
+					return yield* Effect.fail(
+						new Error(
+							`${path} changed on disk while edits were staged in memory. Refusing to guess; re-run the operation (it will start from the current file).`
+						)
+					);
+				}
 				yield* Effect.tryPromise({
 					try: () => cached.reload(),
 					catch: (error) => new Error(`Could not reload ${path}: ${String(error)}`),
@@ -55,6 +70,19 @@ const load = (path: string, reload = false): Effect.Effect<ScrivenerProject, Err
 		});
 		open.set(path, project);
 		return project;
+	});
+
+/** Refuse writes while Scrivener plausibly has the project open, unless forced. */
+const guardWrite = (path: string, force: boolean | undefined): Effect.Effect<void, Error> =>
+	Effect.gen(function* () {
+		if (force === true) return;
+		const hazard = yield* Effect.tryPromise({
+			try: () => writeHazard(path),
+			catch: (error) => new Error(`Could not check write safety: ${String(error)}`),
+		});
+		if (hazard !== undefined) {
+			return yield* Effect.fail(new Error(hazard));
+		}
 	});
 
 const asError = (error: unknown): Error =>
@@ -96,6 +124,13 @@ const binderReadArgs = z.object({
 		.describe('"tree" (default) for structured data, "text" for an indented outline'),
 });
 
+const forceArg = z
+	.boolean()
+	.optional()
+	.describe(
+		'Write even though Scrivener appears to be open. Only safe when you know the open project is a different one — a project open in Scrivener will silently overwrite these changes on its next auto-save.'
+	);
+
 const binderSyncArgs = z.object({
 	path: projectPath,
 	outline: z.array(outlineNode).describe('The intended shape of the tree under root'),
@@ -108,6 +143,7 @@ const binderSyncArgs = z.object({
 		.boolean()
 		.optional()
 		.describe('Report the plan without writing anything (default false)'),
+	force: forceArg,
 });
 
 const documentReadArgs = z.object({
@@ -123,6 +159,7 @@ const documentWriteArgs = z.object({
 	notes: z.string().optional().describe('Document notes'),
 	label: z.string().optional().describe('Label name, as defined in the project'),
 	status: z.string().optional().describe('Status name, as defined in the project'),
+	force: forceArg,
 });
 
 export const scrivenerPlugin = definePlugin(() => ({
@@ -171,6 +208,9 @@ export const scrivenerPlugin = definePlugin(() => ({
 					execute: (raw: unknown) =>
 						Effect.gen(function* () {
 							const args = binderSyncArgs.parse(raw);
+							if (args.dryRun !== true) {
+								yield* guardWrite(args.path, args.force);
+							}
 							const project = yield* load(args.path);
 							return yield* Effect.tryPromise({
 								try: () =>
@@ -216,8 +256,9 @@ export const scrivenerPlugin = definePlugin(() => ({
 					execute: (raw: unknown) =>
 						Effect.gen(function* () {
 							const args = documentWriteArgs.parse(raw);
+							yield* guardWrite(args.path, args.force);
 							const project = yield* load(args.path);
-							const { path: _path, id, ...fields } = args;
+							const { path: _path, id, force: _force, ...fields } = args;
 							return yield* Effect.tryPromise({
 								try: async () => {
 									const metadata =

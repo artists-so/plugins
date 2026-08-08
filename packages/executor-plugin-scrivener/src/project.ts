@@ -103,10 +103,18 @@ function search(nodes: XmlNode[], test: (node: XmlNode) => boolean): XmlNode | u
 	return undefined;
 }
 
+const digestOf = (text: string): string => createHash('sha1').update(text).digest('hex');
+
 export class ScrivenerProject {
 	private dirty = false;
 	private readonly checksums = new Map<string, string>();
 	private checksumsLoaded = false;
+	/**
+	 * Digest of the .scrivx bytes this instance parsed. The invariant every
+	 * write obeys: never replace bytes you have not seen. A content digest
+	 * rather than an mtime, because sync clients preserve timestamps.
+	 */
+	private parsedDigest = '';
 
 	private constructor(
 		readonly path: string,
@@ -121,11 +129,27 @@ export class ScrivenerProject {
 			throw new Error(`Not a Scrivener project (no .scrivx inside): ${path}`);
 		}
 		const scrivxPath = join(path, scrivx);
-		const tree = stripLayoutWhitespace(parseXml(await readFile(scrivxPath, 'utf8')));
+		const raw = await readFile(scrivxPath, 'utf8');
+		const tree = stripLayoutWhitespace(parseXml(raw));
 		if (findDescendant(tree, 'Binder') === undefined) {
 			throw new Error(`No <Binder> in ${scrivx}; the project may be damaged.`);
 		}
-		return new ScrivenerProject(path, scrivxPath, tree);
+		const project = new ScrivenerProject(path, scrivxPath, tree);
+		project.parsedDigest = digestOf(raw);
+		return project;
+	}
+
+	/**
+	 * The .scrivx changed on disk after this instance parsed it — Scrivener's
+	 * auto-save, a sync client, another tool. Saving now would overwrite that
+	 * writer's work with a stale tree, so save() refuses while this is true.
+	 */
+	async changedOnDisk(): Promise<boolean> {
+		return digestOf(await readFile(this.scrivxPath, 'utf8')) !== this.parsedDigest;
+	}
+
+	isDirty(): boolean {
+		return this.dirty;
 	}
 
 	private root(): XmlNode {
@@ -401,9 +425,16 @@ export class ScrivenerProject {
 		if (!this.dirty && this.checksums.size === 0) return false;
 
 		if (this.dirty) {
+			if (await this.changedOnDisk()) {
+				throw new Error(
+					`${this.scrivxPath} changed on disk after it was parsed — most likely Scrivener has the project open and auto-saved, or a sync client delivered a newer version. Writing now would destroy those changes. Nothing was written. Close Scrivener (or let the sync settle), then retry; the project will be re-read automatically.`
+				);
+			}
 			const project = findDescendant(this.tree, 'ScrivenerProject');
 			if (project) setAttr(project, 'Modified', stamp());
-			await writeFile(this.scrivxPath, buildXml(this.tree), 'utf8');
+			const output = buildXml(this.tree);
+			await writeFile(this.scrivxPath, output, 'utf8');
+			this.parsedDigest = digestOf(output);
 			this.dirty = false;
 		}
 
@@ -422,7 +453,9 @@ export class ScrivenerProject {
 
 	/** Re-read from disk, dropping anything staged. */
 	async reload(): Promise<void> {
-		this.tree = stripLayoutWhitespace(parseXml(await readFile(this.scrivxPath, 'utf8')));
+		const raw = await readFile(this.scrivxPath, 'utf8');
+		this.tree = stripLayoutWhitespace(parseXml(raw));
+		this.parsedDigest = digestOf(raw);
 		this.dirty = false;
 		this.checksums.clear();
 		this.checksumsLoaded = false;

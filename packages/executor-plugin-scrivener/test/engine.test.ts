@@ -15,9 +15,10 @@
  */
 
 import { afterAll, beforeAll, expect, test } from 'bun:test';
-import { cp, mkdtemp, readdir, readFile, rm } from 'fs/promises';
+import { cp, mkdtemp, readdir, readFile, rm, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
+import { writeHazard } from '../src/guard.js';
 import { ScrivenerProject } from '../src/project.js';
 import { reconcile, type OutlineNode } from '../src/reconcile.js';
 import { rtfToText, textToRtf } from '../src/rtf.js';
@@ -192,6 +193,52 @@ test('the checksum file records what was written', async () => {
 test('rtf survives a round trip, including the characters that break it', async () => {
 	const text = 'Braces {like this} and a backslash \\ and an em dash — plus 中文.\n\nSecond paragraph.';
 	expect(rtfToText(textToRtf(text))).toBe(text);
+});
+
+// ---------------------------------------------------------------------------
+// External-writer protection — the Scrivener-had-it-open failure, reproduced.
+// ---------------------------------------------------------------------------
+
+const touchScrivx = async (): Promise<void> => {
+	const entries = await readdir(projectPath);
+	const scrivx = entries.find((entry) => entry.endsWith('.scrivx'));
+	const file = join(projectPath, scrivx ?? '');
+	// Append a comment: content changes, validity preserved — like an external save.
+	await writeFile(file, `${await readFile(file, 'utf8')}<!-- external -->`, 'utf8');
+};
+
+test('a save refuses to overwrite an external change, and nothing is written', async () => {
+	const project = await ScrivenerProject.open(projectPath);
+	await touchScrivx();
+	const before = await scrivxOf();
+
+	project.markDirty();
+	expect(project.save()).rejects.toThrow(/changed on disk/);
+	expect(await scrivxOf()).toBe(before);
+});
+
+test('changedOnDisk reports drift, reload clears it, saving then works', async () => {
+	const project = await ScrivenerProject.open(projectPath);
+	await touchScrivx();
+	expect(await project.changedOnDisk()).toBe(true);
+
+	await project.reload();
+	expect(await project.changedOnDisk()).toBe(false);
+
+	project.markDirty();
+	expect(await project.save()).toBe(true);
+	// Its own save must not count as external drift.
+	expect(await project.changedOnDisk()).toBe(false);
+});
+
+test('a user.lock in the package is reported as a write hazard', async () => {
+	const lock = join(projectPath, 'Files', 'user.lock');
+	await writeFile(lock, 'machine: elsewhere\n', 'utf8');
+	const hazard = await writeHazard(projectPath, { checkProcess: false });
+	expect(hazard).toMatch(/user\.lock/);
+
+	await rm(lock);
+	expect(await writeHazard(projectPath, { checkProcess: false })).toBeUndefined();
 });
 
 test('reads the rtf Scrivener itself wrote', async () => {
