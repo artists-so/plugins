@@ -1,0 +1,57 @@
+{
+  "name": "@artists-so/executor-plugin-davinci",
+  "version": "0.0.0",
+  "description": "DaVinci Resolve as a native Executor integration: safe project setup, source ingest, bin organization, and selects variants.",
+  "keywords": [
+    "davinci-resolve",
+    "executor",
+    "executor-plugin",
+    "video-editing",
+    "post-production",
+    "ai-agent"
+  ],
+  "homepage": "https://artists.so",
+  "bugs": {
+    "url": "https://github.com/artists-so/plugins/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/artists-so/plugins.git",
+    "directory": "packages/executor-plugin-davinci"
+  },
+  "license": "MIT",
+  "type": "module",
+  "files": [
+    "dist",
+    "server.js"
+  ],
+  "exports": {
+    "./server": {
+      "types": "./dist/server.d.ts",
+      "default": "./server.js"
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "rm -rf dist && bun build src/server.ts --outdir dist --target node --format esm --sourcemap=external && cp src/resolve_bridge.py dist/resolve_bridge.py && tsc --emitDeclarationOnly",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "samples": "bun scripts/sample-output.ts",
+    "samples:check": "bun scripts/sample-output.ts && git diff --exit-code -- docs/tool-output.md",
+    "prepublishOnly": "bun run build"
+  },
+  "dependencies": {
+    "@executor-js/sdk": "1.5.42",
+    "zod": "^4.4.3"
+  },
+  "peerDependencies": {
+    "effect": "4.0.0-beta.59"
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.1",
+    "effect": "4.0.0-beta.59",
+    "typescript": "^5.7.0"
+  }
+}

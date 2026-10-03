@@ -3,8 +3,9 @@
 Ground truth for working with Executor in this workspace. Every claim carries
 its provenance: a source file in `UsefulSoftwareCo/executor`, a command output,
 or a controlled experiment run on this machine. If a claim has neither, it does
-not belong in this file. Verified against **executor 1.5.40** on 2026-08-08;
-re-verify the experiment-tagged facts after any upgrade.
+not belong in this file. Verified against **executor 1.5.40** on 2026-08-08,
+with the config and DaVinci integration paths re-verified against **1.5.42** on
+2026-08-23; re-verify the experiment-tagged facts after any upgrade.
 
 Provenance tags: `[src: path]` = repo source read directly. `[cli]` = command
 output on this machine. `[exp]` = controlled experiment on this machine, method
@@ -37,7 +38,7 @@ noted. `[types]` = shipped `.d.ts` in `@executor-js/sdk@1.5.40`.
   command itself.** `[src: service.ts serviceEnvironment()]`
 - This scope's install:
   `EXECUTOR_DATA_DIR=$PWD/.executor EXECUTOR_SCOPE_DIR=$PWD executor install --port 4790`
-  run from `/Users/flo/personal/writing`. `[cli]`
+  run from `/Users/flo/personal/creative/writing`. `[cli]`
 - Manage with `executor service status | restart | uninstall`. Logs:
   `<data-dir>/logs/daemon.log` and `daemon.error.log`. `[cli]`
 - Bearer token lives in `<data-dir>/server-control/auth.json` (0600), kept out
@@ -60,13 +61,18 @@ Accepted keys (anything else is silently dropped by the schema decode):
   `definePlugin(...)` factory. Loaded through jiti with
   `interopDefault: true, moduleCache: false`.
   `[src: packages/core/config/src/load-plugins.ts]`
-- `integrations`: declarative array — `openapi | graphql | mcp(remote) |
-  mcp(stdio)` structs. An MCP stdio server can therefore be registered in the
-  file (`kind: "mcp", transport: "stdio", name, command, args?, env?`) instead
-  of through the database. `[src: schema.ts]`
-  - CORRECTION: earlier work in this workspace edited `connection` rows in
-    `data.db` with sqlite3 to register/repair an MCP integration. Unnecessary —
-    `integrations` existed. Do not repeat.
+- `integrations`: the schema accepts declarative `openapi | graphql |
+  mcp(remote) | mcp(stdio)` structs, but **local Executor 1.5.42 does not
+  replay them at boot**. `apps/local/src/executor.ts` calls only
+  `loadPluginsFromJsonc`, and that loader reads only `config.plugins`.
+  Register MCP servers through the supported
+  `executor.mcp.addServer` core tool; a stdio server auto-creates its
+  `org.default` connection and persists across restarts. A matching
+  `integrations` entry may document intent, but is not runtime state.
+  `[src: apps/local/src/executor.ts, packages/core/config/src/load-plugins.ts]
+  [exp: 1.5.42 clean DaVinci scope, restart verified]`
+  - Do not edit `data.db` directly. The core tool is the supported mutation
+    boundary even though the resulting catalog state is database-backed.
 - Host-injected deps are merged into plugin options (`{...deps, ...options}`);
   `definePlugin` strips keys the factory does not declare.
   `[src: load-plugins.ts]`
@@ -207,7 +213,7 @@ and what corrected it.
 | Was believed | Actually | Corrected by |
 | --- | --- | --- |
 | A hand-rolled LaunchAgent is needed for persistence | `executor install` exists, with env pinning + version drift detection | reading `executor --help` properly |
-| `sources` in executor.jsonc silently ignored; DB surgery required for MCP integrations | the key is `integrations`, fully declarative | `schema.ts` |
+| `integrations` being accepted by the config schema means local boot applies it | 1.5.42 local boot loads only `plugins`; use `executor.mcp.addServer`, never direct DB edits | `apps/local/src/executor.ts`, `load-plugins.ts`, clean-scope restart |
 | Bearer token must be scraped from `web.log` | durable 0600 `server-control/auth.json` | `service.ts` |
 | `exports` subpath failing was probably a packaging mistake on our side | the binary's resolver reads no `exports` at all — reproduced with both forms, fresh installs | controlled experiment |
 | Bundling was a workaround; externals are canonical | for this binary, full bundling is the only working form; externals fail on jiti fallback | controlled experiment |

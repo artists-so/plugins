@@ -44,7 +44,7 @@
     "prepublishOnly": "bun run build"
   },
   "dependencies": {
-    "@executor-js/sdk": "1.5.40",
+    "@executor-js/sdk": "1.5.42",
     "fast-xml-parser": "^5.10.1",
     "zod": "^4.4.3"
   },

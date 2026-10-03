@@ -22,7 +22,7 @@ spawning a process and initialising a server for every question.
 | Plugin | Tool | Status |
 | --- | --- | --- |
 | [`@artists-so/executor-plugin-scrivener`](packages/executor-plugin-scrivener) | [Scrivener](https://www.literatureandlatte.com/scrivener) — long-form writing | Shipped |
-| `executor-plugin-davinci` | [DaVinci Resolve](https://www.blackmagicdesign.com/products/davinciresolve) — video editing, color, Fusion | Planned |
+| [`@artists-so/executor-plugin-davinci`](packages/executor-plugin-davinci) | [DaVinci Resolve](https://www.blackmagicdesign.com/products/davinciresolve) — safe project, ingest, and selects workflows | Shipped |
 | `executor-plugin-photopea` | [Photopea](https://www.photopea.com) — image editing | Planned |
 | `executor-plugin-higgsfield` | [Higgsfield](https://higgsfield.ai) — generative video | Planned |
 
@@ -42,6 +42,7 @@ You need [bun](https://bun.sh) and a local
 ```bash
 mkdir my-studio && cd my-studio
 bun add @artists-so/executor-plugin-scrivener
+# or: bun add @artists-so/executor-plugin-davinci
 ```
 
 **2. Declare the plugin** in `executor.jsonc` next to it:
@@ -51,6 +52,9 @@ bun add @artists-so/executor-plugin-scrivener
   "plugins": [{ "package": "@artists-so/executor-plugin-scrivener" }]
 }
 ```
+
+Use `@artists-so/executor-plugin-davinci` in the same field for a Resolve
+scope. Each package README lists its host-application prerequisites.
 
 **3. Run the daemon** as an OS-supervised service, pinned to this scope:
 
